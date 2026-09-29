@@ -88,6 +88,7 @@ func deleteOne(w http.ResponseWriter,r *http.Request) {
 		w.Header().Set("Content-Type","applciation/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Message:"invalid id"})
+		return
 	 }
 
 	 for i,t:= range todos {
@@ -129,7 +130,8 @@ func main() {
 	http.HandleFunc("GET /todos",getTodo)
 	http.HandleFunc("POST /todos",createTodo)
 	http.HandleFunc("GET /todos/{id}",getOne)
-	http.HandleFunc("PATCH /todos{id}",changeDone)
+	http.HandleFunc("PATCH /todos/{id}",changeDone)
+	http.HandleFunc("DELETE /todo/{id}",deleteOne)
 	log.Println("listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
