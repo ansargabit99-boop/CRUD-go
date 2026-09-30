@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 type ErrorResponse struct {
@@ -51,6 +53,9 @@ func (s *Server) getUsers(w http.ResponseWriter,r *http.Request) {
 		
 		err:= users.Scan(&user.Id,&user.Name,&user.Gmail,&user.Number)
 		if err != nil {
+			w.Header().Set("Content-Type","application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(ErrorResponse{Message:"failed to scan"})
 			return
 		}
 		data = append(data, user)
@@ -69,14 +74,21 @@ func(s*Server) DeleteUser(w http.ResponseWriter,r *http.Request) {
 		json.NewEncoder(w).Encode(ErrorResponse{Message:"Invalid id"})
 		return
 	}
-	_,err = pool.Query(r.Context(),"DELETE FROM users WHERE id=$1",userIdNum)
+	tag,err := pool.Exec(r.Context(),"DELETE FROM users WHERE id=$1",userIdNum)
 	if err !=nil {
 		w.Header().Set("Content-Type","application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Message:"something went wrong"})
+		return
 	}
+	 if tag.RowsAffected()==0 {
+		w.Header().Set("Content-Type","application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{"not found"})
+		return
+	 }
 	w.Header().Set("Content-Type","application/json")
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(SuccesMessage{Message: "the user succesfully deleted"})
 	
 }
@@ -116,7 +128,7 @@ func(s*Server) AddUser(w http.ResponseWriter,r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type","application/json")
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(user)
 	
 }
@@ -173,17 +185,22 @@ func(s *Server) changeSomething(w http.ResponseWriter, r *http.Request){
 	values = append(values, userIdNum)
 	Query+= fmt.Sprintf(" WHERE id=$%d RETURNING *",i)
 	var newUser Users
-	rows,err := pool.Query(r.Context(),Query,values...)
+	err = pool.QueryRow(r.Context(),Query,values...).Scan(&newUser.Id,&newUser.Name,&newUser.Gmail,&newUser.Number)
 	if err != nil {
 		w.Header().Set("Content-Type","application/json")
-		w.WriteHeader(http.StatusNotAcceptable)
+		if errors.Is(err,pgx.ErrNoRows) {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(ErrorResponse{Message:"not found"})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Message: "something went wrong"})
 		return
 	}
-	defer rows.Close()
-	rows.Scan(&newUser.Id,&newUser.Name,&newUser.Gmail,&newUser.Number)
+	
+	
 	w.Header().Set("Content-Type","application/json")
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(newUser)
 
 }
@@ -197,5 +214,8 @@ func main() {
 		pool: pool,
 	}
 	http.HandleFunc("GET /users", server.getUsers)
+	http.HandleFunc("DELETE /users/{id}",server.DeleteUser)
+	http.HandleFunc("PATCH /users/{id}",server.changeSomething)
+	http.HandleFunc("POST /users",server.AddUser)
 	log.Fatal(http.ListenAndServe(":8080",nil))
 }
